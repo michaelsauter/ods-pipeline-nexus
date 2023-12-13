@@ -1,0 +1,79 @@
+apiVersion: tekton.dev/v1
+kind: Task
+metadata:
+  name: ods-pipeline-nexus-upload
+spec:
+  description: |
+    Uploads an artifact to Nexus.
+  params:
+    - name: artifact
+      description: |
+        The Nexus artifact to upload. This is prefxed with `${NEXUS_URL}/repository/`, so the final URL of
+        the artifact will be `${NEXUS_URL}/repository/$(params.artifact)`.
+      type: string
+    - name: input
+      description: |
+        The file to upload to Nexus.
+      type: string
+      default: ""
+    - name: policy
+      description: |
+        How to react if the artifact is already present in Nexus. Possible values: SkipIfPresent, ErrorIfPresent
+      type: string
+      default: "SkipIfPresent"
+  steps:
+    - name: upload-file
+      image: quay.io/curl/curl:latest
+      env:
+        - name: NEXUS_URL
+          valueFrom:
+            configMapKeyRef:
+              key: url
+              name: ods-nexus
+        - name: NEXUS_USERNAME
+          valueFrom:
+            secretKeyRef:
+              key: username
+              name: ods-nexus-auth
+        - name: NEXUS_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              key: password
+              name: ods-nexus-auth
+      workingDir: /workspace/source
+      volumeMounts:
+        - mountPath: /etc/ssl/certs/private-cert.pem
+          name: private-cert
+          readOnly: true
+          subPath: tls.crt
+      script: |
+        artifact_url="${NEXUS_URL}/repository/$(params.artifact)"
+        echo "Uploading $(params.input) to ${artifact_url} ..."
+
+        curl_args="-u ${NEXUS_USERNAME}:${NEXUS_PASSWORD}"
+        if [ -f /etc/ssl/certs/private-cert.pem ]; then
+            curl_args="${curl_args} --cacert /etc/ssl/certs/private-cert.pem"
+        fi
+
+        status_code=$(curl ${curl_args} --head ${artifact_url} -o /dev/null -w "%{http_code}")
+
+        if [ "${status_code}" = "404" ]; then
+          curl ${curl_args} --upload-file $(params.input) ${artifact_url}
+        else
+          if [ "$(params.policy)" = "SkipIfPresent"" ]; then
+            echo "WARN: skippig upload as check for ${artifact_url} returned ${status_code}, expected 404"
+          elif [ "$(params.policy)" = "ErrorIfPresent"" ]; then
+            echo "ERROR: check for ${artifact_url} returned ${status_code}, expected 404"
+            exit 1
+          else
+            echo "ERROR: Unknown policy '$(params.policy)'"
+            exit 1
+          fi
+        fi
+  volumes:
+    - name: private-cert
+      secret:
+        secretName: ods-private-cert
+        optional: true
+  workspaces:
+    - { name: source, description: 'source workspace' }

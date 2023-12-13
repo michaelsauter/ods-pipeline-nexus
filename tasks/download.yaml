@@ -1,0 +1,74 @@
+apiVersion: tekton.dev/v1
+kind: Task
+metadata:
+  name: ods-pipeline-nexus-download
+spec:
+  description: |
+    Downloads an artifact from Nexus.
+  params:
+    - name: artifact
+      description: |
+        The Nexus artifact to download. This is prefxed with `${NEXUS_URL}/repository/`, so the final URL to download
+        the artifact from will be `${NEXUS_URL}/repository/$(params.artifact)`.
+      type: string
+    - name: output
+      description: |
+        The file where to download the Nexus artifact to. If empty, the filename of the artifact will be used.
+      type: string
+      default: ""
+  steps:
+    - name: download-file
+      image: quay.io/curl/curl:latest
+      env:
+        - name: NEXUS_URL
+          valueFrom:
+            configMapKeyRef:
+              key: url
+              name: ods-nexus
+        - name: NEXUS_USERNAME
+          valueFrom:
+            secretKeyRef:
+              key: username
+              name: ods-nexus-auth
+        - name: NEXUS_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              key: password
+              name: ods-nexus-auth
+      workingDir: /workspace/source
+      volumeMounts:
+        - mountPath: /etc/ssl/certs/private-cert.pem
+          name: private-cert
+          readOnly: true
+          subPath: tls.crt
+      script: |
+        output_file=""
+        artifact_url="${NEXUS_URL}/repository/$(params.artifact)"
+        if [ "$(params.output)" = "" ]; then
+            output_file="$(basename $(params.artifact))"
+        else
+            output_file="$(params.output)"
+        fi
+        echo "Downloading ${artifact_url} to ${output_file} ..."
+
+        curl_args="-u ${NEXUS_USERNAME}:${NEXUS_PASSWORD}"
+        if [ -f /etc/ssl/certs/private-cert.pem ]; then
+            curl_args="${curl_args} --cacert /etc/ssl/certs/private-cert.pem"
+        fi
+        curl_args="${curl_args} ${artifact_url}"
+        if [ "$(params.output)" = "" ]; then
+            curl_args="${curl_args} -O"
+        else
+            curl_args="${curl_args} -o $(params.output)"
+        fi
+
+        curl $curl_args
+
+        chmod oga+r "${output_file}"
+  volumes:
+    - name: private-cert
+      secret:
+        secretName: ods-private-cert
+        optional: true
+  workspaces:
+    - { name: source, description: 'source workspace' }
