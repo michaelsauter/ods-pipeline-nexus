@@ -60,9 +60,9 @@ spec:
         if [ "${status_code}" = "404" ]; then
           curl ${curl_args} --upload-file $(params.input) ${artifact_url}
         else
-          if [ "$(params.policy)" = "SkipIfPresent"" ]; then
+          if [ "$(params.policy)" = "SkipIfPresent" ]; then
             echo "WARN: skippig upload as check for ${artifact_url} returned ${status_code}, expected 404"
-          elif [ "$(params.policy)" = "ErrorIfPresent"" ]; then
+          elif [ "$(params.policy)" = "ErrorIfPresent" ]; then
             echo "ERROR: check for ${artifact_url} returned ${status_code}, expected 404"
             exit 1
           else
